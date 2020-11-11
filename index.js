@@ -11,20 +11,21 @@ const generateSsml = (voice, pitch, text) =>
         </voice>
     </speak>`;
 
-const textToSpeechSameSynth = (synth, text, id) => {
+const textToSpeechAsync = (synth, text, id) => {
     return new Promise((resolve, reject) => {
         synth.speakSsmlAsync(
-          text,
-          (data) => {
+            text,
+            (data) => {
             console.log(`${id} TTS complete`)
             resolve(data);
-          },
-          (err) => {
+            },
+            (err) => {
             console.error(`${id} TTS has an error:  ${err}`);
             reject(err);
-          });
+            });
         })
 }
+
 
 (async ()=>{
 
@@ -35,6 +36,8 @@ const textToSpeechSameSynth = (synth, text, id) => {
     let cnt = [...Array(25).keys()];
     const voice = "en-US-AriaNeural";
     const pitch = "-5%";
+
+    console.log('Shared Synth approach - appears sequential...')
     try {
         let hrstart = process.hrtime();
 
@@ -52,7 +55,7 @@ const textToSpeechSameSynth = (synth, text, id) => {
             try {
                 let ssml = generateSsml(voice, pitch, 
                     `This is item ${id} and it should quickly return a result and shouldn't break the synth. It also needs to be long enough that maybe there is a time difference in returning them? This probably isn't long enough but isn't terrible.`)
-                const data = await textToSpeechSameSynth(synth, ssml, id);
+                const data = await textToSpeechAsync(synth, ssml, id);
                 let hrItemEnd = process.hrtime(hrstart);
                 console.info('%s results execution time: %ds %dms', id, hrItemEnd[0], hrItemEnd[1] / 1000000)
                 return data;
@@ -67,8 +70,69 @@ const textToSpeechSameSynth = (synth, text, id) => {
 
         let allFiles = await Promise.all(allMp3s.map(async (audioData, id) => {
             try {
+                //**** Having to access a priv member seems sub optimal ****
                 const audioBuffer = Buffer.from(audioData.privAudioData);
                 return await fs.writeFile(`sameSynth/${id}.mp3`, audioBuffer)
+            } catch (error) {
+                console.error(`${id} had an error writing audio the file`)    
+                console.log(error);
+            }
+
+        }))
+
+        console.log(`${allFiles.length} mp3s  writtten to disk`)
+
+        let hrFullTime = process.hrtime(hrstart)
+        console.info('Total single synth execution in: %ds %dms',  hrFullTime[0], hrFullTime[1] / 1000000)
+
+
+    } catch (error) {
+        console.error(error)
+    }
+    
+
+    console.log('A new synth per call approach - faster but seemed to break in production')
+    try {
+        let hrstart = process.hrtime();
+
+        const speechConfig = sdk.SpeechConfig.fromSubscription(
+            msftSubscriptionKey,
+            msftLocation
+          );
+        speechConfig.speechSynthesisOutputFormat =
+        sdk.SpeechSynthesisOutputFormat.Audio16Khz128KBitRateMonoMp3;
+    
+         
+        console.log('Attempting 25 batch calls ')
+        let allMp3s = await Promise.all(cnt.map(async id => {
+            
+            let multSynth = new sdk.SpeechSynthesizer(speechConfig, null);
+            try {
+
+                let ssml = generateSsml(voice, pitch, 
+                    `This is item ${id} and it should quickly return a result and shouldn't break the synth. It also needs to be long enough that maybe there is a time difference in returning them? This probably isn't long enough but isn't terrible.`)
+                const data = await textToSpeechAsync(multSynth, ssml, id);
+                let hrItemEnd = process.hrtime(hrstart);
+                console.info('%s results execution time: %ds %dms', id, hrItemEnd[0], hrItemEnd[1] / 1000000)
+                multSynth.close();
+                multSynth = undefined;
+
+                return data;
+
+            } catch (error) {
+                console.error(`${id} had a rare error`)
+                console.error(error)
+                multSynth.close();
+                multSynth = undefined;
+            }
+        }))    
+
+
+
+        let allFiles = await Promise.all(allMp3s.map(async (audioData, id) => {
+            try {
+                const audioBuffer = Buffer.from(audioData.privAudioData);
+                return await fs.writeFile(`individualSynths/${id}.mp3`, audioBuffer)
             } catch (error) {
                 console.error(`${id} had an error writing audio the file`)    
                 console.log(error);
@@ -86,6 +150,8 @@ const textToSpeechSameSynth = (synth, text, id) => {
     } catch (error) {
         console.error(error)
     }
-    
+
+    process.exit();
+
 
 })();

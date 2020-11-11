@@ -2,6 +2,7 @@
 
 .env
 sameSynth/**
+individualSynths/**
 
 # dependencies
 /node_modules
